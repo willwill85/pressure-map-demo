@@ -78,4 +78,5 @@ Command-line options take precedence over `settings.json`, which takes precedenc
 - `web/monitor.html` — browser-based monitoring interface
 - `settings.json` — runtime threshold configuration
 - `run.sh` / `run.bat` — startup scripts
+- [`protocol.md`](protocol.md) — English MIAN pressure-mat serial protocol reference
 - `HANDOFF.md` — development handoff notes
