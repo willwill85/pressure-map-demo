@@ -1,0 +1,6 @@
+# 睡眠监测 Python 版依赖
+# 安装: pip install -r requirements.txt   (run.bat 会自动做这一步)
+
+pyserial>=3.5    # 两路串口 (压力垫 / 心率呼吸)
+numpy>=1.24      # 压力图矩阵运算
+aiohttp>=3.9     # 本地网页服务 + WebSocket

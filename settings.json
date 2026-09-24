@@ -1,0 +1,8 @@
+{
+  "qp": 40,
+  "onBedCell": 25,
+  "onBedCount": 55,
+  "pressurePort": "/dev/cu.usbserial-01F6E3B81",
+  "vitalsPort": "/dev/cu.usbserial-01F6E3B80",
+  "serverPort": 5000
+}

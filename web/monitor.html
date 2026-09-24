@@ -1,0 +1,789 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>睡眠监测</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #000;
+    --panel: rgba(255, 255, 255, 0.08);
+    --panel-border: rgba(255, 255, 255, 0.12);
+    --text: rgba(255, 255, 255, 0.96);
+    --muted: rgba(255, 255, 255, 0.62);
+    --faint: rgba(255, 255, 255, 0.34);
+    --accent: #ff7a1a;
+    --edge-pad: clamp(14px, 1.55vw, 26px);
+    --panel-width: clamp(300px, 25vw, 380px);
+    --hud-gap: clamp(10px, 1.1vw, 16px);
+    --panel-pad: clamp(14px, 1.05vw, 18px);
+    --panel-radius: clamp(16px, 1.35vw, 20px);
+    --title-size: clamp(22px, 1.9vw, 30px);
+    --metric-size: clamp(54px, 5.6vw, 92px);
+    --body-size: clamp(11px, 0.86vw, 13px);
+    --small-size: clamp(10px, 0.78vw, 12px);
+    --tech-size: clamp(8px, 0.56vw, 9px);
+    font-family: "DIN Alternate", "Bahnschrift", "Avenir Next Condensed",
+                 "HarmonyOS Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-synthesis: none;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; }
+
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: var(--bg); color: var(--text); overflow: hidden;
+  }
+
+  body::before {
+    content: ""; position: fixed; inset: 0; pointer-events: none;
+    background:
+      radial-gradient(circle at 38% 45%, rgba(255, 255, 255, 0.05), transparent 34%),
+      radial-gradient(circle at 50% 118%, rgba(255, 122, 26, 0.06), transparent 46%);
+  }
+
+  #app { position: relative; height: 100%; display: flex; }
+
+  /* ---------- 左: 3D 压力场 ---------- */
+  #stage { position: relative; flex: 1; min-width: 0; }
+  #pressure-canvas { position: absolute; inset: 0; }
+  #pressure-canvas canvas { display: block; }
+
+  .stage-label {
+    position: absolute; left: var(--edge-pad); top: var(--edge-pad);
+    font-size: var(--tech-size); letter-spacing: 0.24em;
+    text-transform: uppercase; color: var(--faint); pointer-events: none;
+  }
+
+  .stage-foot {
+    position: absolute; left: var(--edge-pad); bottom: var(--edge-pad);
+    display: flex; align-items: center; gap: 10px;
+    font-size: var(--tech-size); letter-spacing: 0.18em; color: var(--faint);
+  }
+
+  .scale {
+    position: absolute; right: var(--edge-pad); top: 50%;
+    transform: translateY(-50%);
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
+    pointer-events: none;
+  }
+  .scale-bar {
+    width: 6px; height: clamp(120px, 22vh, 220px); border-radius: 3px;
+    background: linear-gradient(to top,
+      #ff4fb8 0%, #d93cff 18%, #b02cff 34%, #ff2f6d 52%, #ff6a28 72%, #ffe86a 100%);
+    opacity: 0.85;
+  }
+  .scale span { font-size: var(--tech-size); color: var(--faint); letter-spacing: 0.14em; }
+
+  /* ---------- 右: HUD ---------- */
+  .hud {
+    width: var(--panel-width); flex: none;
+    padding: var(--edge-pad) var(--edge-pad) var(--edge-pad) 0;
+    display: flex; flex-direction: column; gap: var(--hud-gap);
+    z-index: 2; overflow-y: auto;
+  }
+  .hud::-webkit-scrollbar { width: 0; }
+
+  .intro { padding: 2px 2px 4px; }
+  .intro h1 { margin: 0; font-size: var(--title-size); font-weight: 600; letter-spacing: 0.02em; }
+  .intro .sub {
+    margin-top: 4px; font-size: var(--tech-size); letter-spacing: 0.24em;
+    text-transform: uppercase; color: var(--faint);
+  }
+
+  .panel {
+    background: var(--panel); border: 1px solid var(--panel-border);
+    border-radius: var(--panel-radius); padding: var(--panel-pad);
+    backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px);
+  }
+
+  .panel-title-row {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 10px; margin-bottom: 10px;
+  }
+  .panel-title {
+    font-size: var(--small-size); letter-spacing: 0.2em;
+    text-transform: uppercase; color: var(--muted);
+  }
+
+  .metric { display: flex; align-items: flex-end; gap: 8px; line-height: 0.86; }
+  .metric .value {
+    font-size: var(--metric-size); font-weight: 600;
+    font-variant-numeric: tabular-nums; letter-spacing: -0.02em;
+  }
+  .metric .unit { font-size: var(--body-size); color: var(--muted); padding-bottom: 6px; }
+  .metric.idle .value { color: var(--faint); }
+
+  .wave { width: 100%; height: clamp(52px, 7vh, 84px); display: block; margin-top: 10px; }
+
+  .meta-row {
+    display: flex; justify-content: space-between; gap: 8px; margin-top: 8px;
+    font-size: var(--tech-size); letter-spacing: 0.14em; color: var(--faint);
+  }
+
+  .stat-line {
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: var(--body-size); padding: 5px 0; gap: 8px;
+  }
+  .stat-line + .stat-line { border-top: 1px solid rgba(255, 255, 255, 0.06); }
+  .stat-line .k { color: var(--muted); white-space: nowrap; }
+  .stat-line .v { font-variant-numeric: tabular-nums; }
+
+  .dot {
+    display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--faint); margin-right: 7px; vertical-align: middle;
+  }
+  .dot.on { background: var(--accent); box-shadow: 0 0 10px var(--accent); }
+
+  .switch {
+    appearance: none; border: 0; cursor: pointer; flex: none;
+    width: 51px; height: 31px; border-radius: 999px;
+    background: rgba(255, 255, 255, 0.18);
+    position: relative; transition: background 0.22s ease;
+  }
+  .switch::after {
+    content: ""; position: absolute; top: 5px; left: 5px;
+    width: 21px; height: 21px; border-radius: 50%;
+    background: #fff; transition: transform 0.22s ease;
+  }
+  .switch[aria-pressed="true"] { background: var(--accent); }
+  .switch[aria-pressed="true"]::after { transform: translateX(20px); }
+
+  .switch.sm { width: 38px; height: 22px; }
+  .switch.sm::after { width: 14px; height: 14px; top: 4px; left: 4px; }
+  .switch.sm[aria-pressed="true"]::after { transform: translateX(16px); }
+
+  .num {
+    width: 66px; text-align: center;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--panel-border); border-radius: 8px;
+    color: var(--text); font: inherit; font-size: var(--body-size);
+    padding: 4px 0; font-variant-numeric: tabular-nums;
+  }
+  .num:focus { outline: 1px solid var(--accent); }
+  .num::-webkit-inner-spin-button { opacity: 0.35; }
+
+  .hint {
+    margin-top: 8px; font-size: var(--tech-size); line-height: 1.55;
+    color: var(--faint); letter-spacing: 0.04em;
+  }
+  .hint b { color: var(--muted); font-weight: 600; }
+
+  .save {
+    margin-top: 10px; width: 100%; cursor: pointer;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--panel-border); border-radius: 10px;
+    color: var(--text); font: inherit; font-size: var(--small-size);
+    letter-spacing: 0.18em; padding: 8px 0;
+    transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+  }
+  .save:hover { background: rgba(255, 255, 255, 0.12); }
+  .save.ok { background: rgba(255, 122, 26, 0.18); border-color: var(--accent); color: var(--accent); }
+  .save.err { background: rgba(255, 60, 60, 0.16); border-color: #ff4d4d; color: #ff8080; }
+  .save.danger { color: rgba(255, 120, 120, 0.85); }
+  .save.danger:hover { background: rgba(255, 60, 60, 0.16); border-color: #ff4d4d; }
+  .save + .save { margin-top: 6px; }
+
+  .mini {
+    cursor: pointer; background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--panel-border); border-radius: 7px;
+    color: var(--muted); font: inherit; font-size: var(--tech-size);
+    letter-spacing: 0.16em; padding: 3px 9px;
+  }
+  .mini:hover { background: rgba(255, 255, 255, 0.12); color: var(--text); }
+
+  .sel {
+    max-width: 190px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid var(--panel-border); border-radius: 8px;
+    color: var(--text); font: inherit; font-size: var(--tech-size);
+    padding: 4px 6px;
+  }
+  .sel:focus { outline: 1px solid var(--accent); }
+  .sel option { background: #14141a; color: #fff; }
+
+  .footer {
+    margin-top: auto; padding-top: 4px;
+    font-size: var(--tech-size); letter-spacing: 0.18em; color: var(--faint);
+    display: flex; justify-content: space-between; gap: 8px;
+  }
+
+  @media (max-width: 900px) {
+    #app { flex-direction: column; }
+    #stage { min-height: 46vh; }
+    .hud { width: auto; padding: 0 var(--edge-pad) var(--edge-pad); }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="stage">
+    <div id="pressure-canvas"></div>
+    <div class="stage-label">Pressure Field · 48 × 96</div>
+    <div class="stage-foot">
+      <span>自动旋转</span>
+      <button type="button" class="switch sm" id="auto-rotate" aria-pressed="true"
+              aria-label="自动旋转"></button>
+    </div>
+    <div class="scale"><span>MAX</span><div class="scale-bar"></div><span>MIN</span></div>
+  </div>
+
+  <div class="hud">
+    <section class="intro">
+      <h1>睡眠监测</h1>
+      <div class="sub">Sleep Monitor · BCG</div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-title-row">
+        <span class="panel-title">心率</span>
+        <span class="panel-title" id="hr-sqi">SQI --</span>
+      </div>
+      <div class="metric idle" id="hr-metric">
+        <span class="value" id="val-hr">--</span><span class="unit">BPM</span>
+      </div>
+      <canvas class="wave" id="wave-hr"></canvas>
+      <div class="meta-row"><span>0.6 – 2.5 Hz 带通</span><span>4 秒窗 · 量程 ±24</span></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-title-row">
+        <span class="panel-title">呼吸</span>
+        <span class="panel-title" id="br-sqi">SQI --</span>
+      </div>
+      <div class="metric idle" id="br-metric">
+        <span class="value" id="val-br">--</span><span class="unit">次 / 分</span>
+      </div>
+      <canvas class="wave" id="wave-br"></canvas>
+      <div class="meta-row"><span>0.1 – 0.5 Hz 带通</span><span>8 秒窗 · 量程 ±12</span></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-title-row">
+        <span class="panel-title">传感器</span>
+        <button type="button" class="switch" id="serial-toggle"
+                aria-pressed="false" aria-label="串口通断"></button>
+      </div>
+      <div class="stat-line">
+        <span class="k"><i class="dot" id="bed-dot"></i>在床状态</span>
+        <span class="v" id="bed-state">离床</span>
+      </div>
+      <div class="stat-line">
+        <span class="k">压力查询参数</span>
+        <input class="num" id="qp" type="number" min="0" max="255" step="1" value="5" />
+      </div>
+      <button type="button" class="save" data-save>保存</button>
+    </section>
+
+    <section class="panel">
+      <div class="panel-title-row">
+        <span class="panel-title">在离床阈值</span>
+        <span class="panel-title" id="cells-live">0 点</span>
+      </div>
+      <div class="stat-line">
+        <span class="k">单点压力阈值</span>
+        <input class="num" id="bed-cell" type="number" min="0" max="255" step="1" value="30" />
+      </div>
+      <div class="stat-line">
+        <span class="k">受压测点数阈值</span>
+        <input class="num" id="bed-count" type="number" min="1" max="512" step="1" value="40" />
+      </div>
+      <div class="hint">
+        单点读数超过<b>压力阈值</b>记 1 分，全垫总分达到<b>测点数阈值</b>判为有人。<br />
+        标定：空垫记一次上方的实时点数，躺上去再记一次，阈值取两者中间。
+      </div>
+      <button type="button" class="save" data-save>保存</button>
+    </section>
+
+    <section class="panel">
+      <div class="panel-title-row">
+        <span class="panel-title">连接设置</span>
+        <button type="button" class="mini" id="refresh-ports">刷新</button>
+      </div>
+      <div class="stat-line">
+        <span class="k">压力垫串口</span>
+        <select class="sel" id="sel-pressure"><option value="">自动识别</option></select>
+      </div>
+      <div class="stat-line">
+        <span class="k">心率呼吸串口</span>
+        <select class="sel" id="sel-vitals"><option value="">自动识别</option></select>
+      </div>
+      <div class="stat-line">
+        <span class="k">服务端口</span>
+        <input class="num" id="server-port" type="number" min="1" max="65535" step="1" value="5000" />
+      </div>
+      <div class="hint" id="port-hint">
+        改串口点「应用串口」即时重连；改服务端口要<b>保存后重启</b>才生效。
+      </div>
+      <button type="button" class="save" id="apply-ports">应用串口</button>
+      <button type="button" class="save" data-save>保存</button>
+      <button type="button" class="save danger" id="shutdown">退出程序</button>
+    </section>
+
+    <div class="footer">
+      <span id="ports">--</span><span id="link">连接中</span>
+    </div>
+  </div>
+</div>
+
+<script src="libs/three.min.js"></script>
+<script src="libs/OrbitControls.js"></script>
+<script>
+"use strict";
+
+// ==================== 压力色标: matplotlib plasma ====================
+// 64 个等距锚点, 由 matplotlib.colormaps['plasma'] 直接导出;
+// 线性插值后与官方 256 级表相比最大误差 1.48/255, 肉眼不可辨。
+const PLASMA = [[13,8,135],[25,6,140],[34,6,144],[42,5,147],[49,5,151],[56,4,154],[63,4,156],[70,3,159],[76,2,161],[83,2,163],[89,1,165],[96,1,166],[102,0,167],[108,0,168],[114,1,168],[120,1,168],[128,4,168],[134,6,166],[139,10,165],[145,14,163],[150,19,161],[156,23,158],[161,27,155],[166,32,152],[171,36,148],[176,41,145],[180,46,141],[184,50,137],[189,55,134],[193,59,130],[197,64,126],[201,68,122],[205,74,118],[209,78,114],[213,83,111],[216,87,107],[219,92,104],[222,97,100],[226,101,97],[229,106,93],[231,111,90],[234,116,87],[237,121,83],[239,126,80],[241,131,76],[244,136,73],[246,141,69],[247,147,66],[249,154,62],[251,159,58],[252,165,55],[253,171,51],[253,177,48],[254,183,45],[254,189,42],[253,195,40],[253,202,38],[252,208,37],[251,215,36],[249,221,37],[247,228,37],[245,235,39],[242,242,39],[240,249,33]];
+
+/** 归一压力 t(0..1) → [r,g,b] 各 0..1, 供 THREE.Color 用 */
+function plasma(t) {
+  t = t < 0 ? 0 : (t > 1 ? 1 : t);
+  const x = t * (PLASMA.length - 1);
+  const k = Math.min(PLASMA.length - 2, Math.floor(x));
+  const u = x - k;
+  const a = PLASMA[k], b = PLASMA[k + 1];
+  return [
+    (a[0] + (b[0] - a[0]) * u) / 255,
+    (a[1] + (b[1] - a[1]) * u) / 255,
+    (a[2] + (b[2] - a[2]) * u) / 255,
+  ];
+}
+
+/** 生成 CSS 渐变字符串, 让色标条和 3D 用同一套颜色 */
+function plasmaGradient(direction) {
+  const stops = [];
+  for (let i = 0; i < PLASMA.length; i++) {
+    const [r, g, b] = PLASMA[i];
+    stops.push(`rgb(${r},${g},${b}) ${(i / (PLASMA.length - 1) * 100).toFixed(1)}%`);
+  }
+  return `linear-gradient(${direction}, ${stops.join(",")})`;
+}
+document.querySelector(".scale-bar").style.background = plasmaGradient("to top");
+
+// ==================== 状态 ====================
+let ws = null;
+let g_pressureMap = null;
+let pressureDirty = false;      // 只在收到新帧时才重建 4608 个实例, 别每帧都算
+let hrWave = null, brWave = null;
+
+// 参数的权威来源是服务端的 settings.json, 页面只负责显示和修改, 不做本地缓存 ——
+// 否则换个浏览器打开就会用本地旧值把服务端设置覆盖掉。
+
+function base64ToFloat32(b64) {
+  if (!b64) return null;
+  try {
+    const bin = atob(b64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new Float32Array(bytes.buffer);
+  } catch (e) { return null; }
+}
+
+// ==================== 波形 ====================
+// 固定量程(不自适应): 画布纵向表示 ±RANGE, 超出部分裁剪在边界上。
+// 数值来自实测带通后的幅度(有人时心跳约 ±10、呼吸约 ±3.4), 各留一倍余量。
+// 传感器增益或安装方式变了觉得波形太平/顶格, 改这两个数即可。
+const HEART_WAVE_RANGE = 24;
+const RESP_WAVE_RANGE = 12;
+
+function drawWave(canvas, data, color, range) {
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  if (!w || !h) return;
+  const dpr = window.devicePixelRatio || 1;
+  if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+    canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr);
+  }
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.clearRect(0, 0, w, h);
+
+  // 零位基准线
+  ctx.beginPath();
+  ctx.moveTo(0, h / 2);
+  ctx.lineTo(w, h / 2);
+  ctx.strokeStyle = "rgba(255,255,255,0.08)";
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  if (!data || data.length < 2) return;
+
+  const pad = 2;
+  const half = h / 2 - pad;
+  const y = (v) => {
+    let t = v / range;                       // -1..1
+    t = t > 1 ? 1 : (t < -1 ? -1 : t);       // 超范围裁剪, 永不出界
+    return h / 2 - t * half;
+  };
+
+  ctx.beginPath();
+  for (let i = 0; i < data.length; i++) {
+    const v = Number.isFinite(data[i]) ? data[i] : 0;
+    const px = (i / (data.length - 1)) * w;
+    const py = y(v);
+    i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+  }
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.4;
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  ctx.stroke();
+}
+
+// 每帧都重画 (400 点开销可忽略), 配合 20Hz 的数据推送, 视觉上连续不卡顿
+function renderWaves() {
+  drawWave(document.getElementById("wave-hr"), hrWave,
+           "rgba(255,255,255,0.92)", HEART_WAVE_RANGE);
+  drawWave(document.getElementById("wave-br"), brWave,
+           "rgba(255,122,26,0.92)", RESP_WAVE_RANGE);
+}
+
+// ==================== Three.js 3D 压力热图 ====================
+// 结构沿用原版 (底座 + 48×96 InstancedMesh 方块 + 缓慢来回运镜),
+// 只把配色换成手套色标, 并加脏标记避免每帧重算实例。
+(function initThreeJS() {
+  const container = document.getElementById("pressure-canvas");
+  if (!container) return;
+  let width = container.clientWidth, height = container.clientHeight;
+
+  const scene = new THREE.Scene();
+  scene.background = null;
+  scene.fog = new THREE.Fog(0x000000, 20, 150);
+
+  const camera = new THREE.PerspectiveCamera(50, width / height, 0.1, 1000);
+  const posStart = new THREE.Vector3(17, 82, 77);
+  const posEnd = new THREE.Vector3(87, 60, 44);
+  const sceneCenter = new THREE.Vector3(9, 15, 0);
+  camera.position.copy(posStart);
+  camera.lookAt(sceneCenter);
+
+  // 打亮: 环境光拉满 + 主光 + 两侧补光, 避免侧面全黑看不清
+  scene.add(new THREE.AmbientLight(0xffffff, 1.15));
+  const dirLight = new THREE.DirectionalLight(0xffffff, 1.35);
+  dirLight.position.set(-20, 50, 20);
+  scene.add(dirLight);
+  const fillLight = new THREE.DirectionalLight(0xffffff, 0.55);
+  fillLight.position.set(40, 30, -30);
+  scene.add(fillLight);
+  const rimLight = new THREE.DirectionalLight(0xff9a4a, 0.35);
+  rimLight.position.set(0, 10, 60);
+  scene.add(rimLight);
+
+  // 床体只保留线框, 不要实心面片
+  const baseW = 40, baseL = 80, baseH = 10;
+  const baseGeo = new THREE.BoxGeometry(baseW, baseH, baseL);
+  const wireframe = new THREE.LineSegments(
+    new THREE.EdgesGeometry(baseGeo),
+    new THREE.LineBasicMaterial({ color: 0xffffff, opacity: 0.28, transparent: true }));
+  wireframe.position.set(9, 15, 0);
+  scene.add(wireframe);
+  baseGeo.dispose();
+
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer.setSize(width, height);
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  container.appendChild(renderer.domElement);
+
+  const controls = new THREE.OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.05;
+  controls.enableZoom = true;
+  controls.minDistance = 45;
+  controls.maxDistance = 180;
+  controls.target.copy(sceneCenter);
+  controls.update();
+  controls.autoRotate = false;
+
+  let autoRotationEnabled = true;
+  const autoRotateBtn = document.getElementById("auto-rotate");
+  function setAutoRotation(enabled) {
+    autoRotationEnabled = enabled;
+    autoRotateBtn.setAttribute("aria-pressed", enabled ? "true" : "false");
+  }
+  autoRotateBtn.addEventListener("click", () => setAutoRotation(!autoRotationEnabled));
+  setAutoRotation(true);
+
+  let isUserInteracting = false;
+  controls.addEventListener("start", () => { isUserInteracting = true; });
+  controls.addEventListener("end", () => { isUserInteracting = false; });
+
+  // 压力阵列
+  const gridW = 48, gridH = 96;
+  const particleCount = gridW * gridH;
+  // 球体, 低细分保证 4608 个实例的帧率。
+  // 半径按"无压力"取, 有压力时靠实例缩放放大到 2 倍 (最大最小差一倍)。
+  const SPHERE_MIN_R = 0.085;
+  const blockGeo = new THREE.SphereGeometry(SPHERE_MIN_R, 10, 7);
+  // Lambert = 只有漫反射, 没有高光, 不反光
+  const blockMat = new THREE.MeshLambertMaterial();
+  const pressureMesh = new THREE.InstancedMesh(blockGeo, blockMat, particleCount);
+  const dummy = new THREE.Object3D();
+  const color = new THREE.Color();
+
+  // 预存每个实例的 x/z, 更新时不用重算
+  const posX = new Float32Array(particleCount);
+  const posZ = new Float32Array(particleCount);
+  let idx = 0;
+  for (let y = 0; y < gridH; y++) {
+    for (let x = 0; x < gridW; x++) {
+      const px = (x * 0.8) - 19.2 + 9;
+      const pz = (y * 0.8) - 38.4;
+      posX[idx] = px; posZ[idx] = pz;
+      dummy.position.set(px, 20, pz);
+      dummy.updateMatrix();
+      pressureMesh.setMatrixAt(idx, dummy.matrix);
+      pressureMesh.setColorAt(idx, color.setHex(0x1c1c1e));
+      idx++;
+    }
+  }
+  scene.add(pressureMesh);
+
+  const tempColor = new THREE.Color();
+  const baseColor = new THREE.Color(0x1c1c1e);   // 无压力时的深灰
+  const activeColor = new THREE.Color();
+
+  const DISPLACE = 0.4 / 3;    // 下陷幅度取原来的 1/3
+
+  function updateInstances() {
+    if (!g_pressureMap || g_pressureMap.length !== particleCount) return;
+    for (let i = 0; i < particleCount; i++) {
+      const pressure = g_pressureMap[i];
+      dummy.position.set(posX[i], 20 - pressure * DISPLACE, posZ[i]);
+      // 直径随压力从 1 倍长到 2 倍
+      const s = 1.0 + Math.min(1.0, pressure / 8.0);
+      dummy.scale.set(s, s, s);
+      dummy.updateMatrix();
+      pressureMesh.setMatrixAt(i, dummy.matrix);
+
+      const norm = Math.min(1.0, pressure / 8.0);
+      const rgb = plasma(norm);
+      activeColor.setRGB(rgb[0], rgb[1], rgb[2]);
+      tempColor.lerpColors(baseColor, activeColor, Math.min(1.0, pressure / 2.0));
+      pressureMesh.setColorAt(i, tempColor);
+    }
+    pressureMesh.instanceMatrix.needsUpdate = true;
+    pressureMesh.instanceColor.needsUpdate = true;
+  }
+
+  function animate() {
+    requestAnimationFrame(animate);
+
+    if (autoRotationEnabled && !isUserInteracting) {
+      const alpha = (Math.sin(Date.now() * 0.0003) + 1) * 0.5;
+      camera.position.lerpVectors(posStart, posEnd, alpha);
+      camera.lookAt(sceneCenter);
+    } else {
+      controls.update();
+    }
+
+    if (pressureDirty) { pressureDirty = false; updateInstances(); }
+    renderWaves();
+
+    renderer.render(scene, camera);
+  }
+
+  window.addEventListener("resize", () => {
+    width = container.clientWidth; height = container.clientHeight;
+    camera.aspect = width / height;
+    camera.updateProjectionMatrix();
+    renderer.setSize(width, height);
+  });
+
+  animate();
+})();
+
+// ==================== WebSocket ====================
+function setLink(ok) {
+  document.getElementById("link").textContent = ok ? "已连接" : "重连中";
+}
+
+function applySensors(msg) {
+  const occupied = Boolean(msg.occupied);
+  document.getElementById("val-hr").textContent = msg.hr > 0 ? msg.hr : "--";
+  document.getElementById("val-br").textContent = msg.br > 0 ? msg.br : "--";
+  document.getElementById("hr-metric").classList.toggle("idle", !(msg.hr > 0));
+  document.getElementById("br-metric").classList.toggle("idle", !(msg.br > 0));
+  document.getElementById("hr-sqi").textContent =
+    msg.hrSqi > 0 ? "SQI " + Math.round(msg.hrSqi) : "SQI --";
+  document.getElementById("br-sqi").textContent =
+    msg.brSqi > 0 ? "SQI " + Math.round(msg.brSqi) : "SQI --";
+  document.getElementById("bed-state").textContent = occupied ? "在床" : "离床";
+  document.getElementById("bed-dot").classList.toggle("on", occupied);
+  document.getElementById("cells-live").textContent = (msg.cells != null ? msg.cells : 0) + " 点";
+
+  hrWave = base64ToFloat32(msg.hrWave);
+  brWave = base64ToFloat32(msg.brWave);
+}
+
+function shortPort(p) {
+  return p ? p.replace(/^\/dev\/(cu|tty)\./, "").toUpperCase() : "--";
+}
+
+function applySerial(msg) {
+  const connected = Boolean(msg.connected);
+  const btn = document.getElementById("serial-toggle");
+  btn.setAttribute("aria-pressed", connected ? "true" : "false");
+  btn.title = connected ? "点击断开串口" : "点击重新连接串口";
+  document.getElementById("ports").textContent = connected
+    ? `${shortPort(msg.pressurePort)} / ${shortPort(msg.vitalsPort)}`
+    : "串口已断开";
+
+  syncNumber("qp", msg.qp);
+  syncNumber("bed-cell", msg.onBedCell);
+  syncNumber("bed-count", msg.onBedCount);
+  syncNumber("server-port", msg.serverPort);
+
+  if (Array.isArray(msg.ports)) fillPortSelects(msg.ports, msg);
+
+  // 端口改了但还没重启时给个提示
+  const hint = document.getElementById("port-hint");
+  if (msg.runningPort && msg.serverPort && msg.runningPort !== msg.serverPort) {
+    hint.innerHTML = `当前实际监听 <b>${msg.runningPort}</b>，设置为 <b>${msg.serverPort}</b>，` +
+                     `<b>保存并重启</b>后生效。`;
+  } else {
+    hint.innerHTML = "改串口点「应用串口」即时重连；改服务端口要<b>保存后重启</b>才生效。";
+  }
+}
+
+function fillPortSelects(ports, msg) {
+  [["sel-pressure", msg.pressurePort], ["sel-vitals", msg.vitalsPort]].forEach(([id, current]) => {
+    const el = document.getElementById(id);
+    if (document.activeElement === el) return;      // 用户正在选, 别打断
+    const keep = el.value;
+    el.innerHTML = '<option value="">自动识别</option>';
+    ports.forEach((p) => {
+      const opt = document.createElement("option");
+      opt.value = p.device;
+      opt.textContent = shortPort(p.device) + (p.role ? ` · ${p.role}` : "");
+      opt.title = p.description || p.device;
+      el.appendChild(opt);
+    });
+    // 优先保持用户已选的; 否则显示服务端当前实际用的口
+    const want = keep || current || "";
+    el.value = [...el.options].some((o) => o.value === want) ? want : "";
+  });
+}
+
+function syncNumber(id, value) {
+  const el = document.getElementById(id);
+  if (typeof value === "number" && document.activeElement !== el) el.value = value;
+}
+
+function connect() {
+  ws = new WebSocket(`ws://${location.host}/ws`);
+  // 连上后不主动推参数, 等服务端下发 serial 状态填进输入框
+  ws.onopen = () => setLink(true);
+  ws.onclose = () => { setLink(false); setTimeout(connect, 2000); };
+  ws.onerror = () => { try { ws.close(); } catch (e) {} };
+  ws.onmessage = (event) => {
+    let msg;
+    try { msg = JSON.parse(event.data); } catch (e) { return; }
+    if (msg.type === "pressure") {
+      g_pressureMap = base64ToFloat32(msg.data);
+      pressureDirty = true;
+    } else if (msg.type === "sensors") {
+      applySensors(msg);
+    } else if (msg.type === "serial") {
+      applySerial(msg);
+    } else if (msg.type === "saved") {
+      flashSaveButtons(msg.ok);
+    } else if (msg.type === "bye") {
+      document.getElementById("link").textContent = "程序已退出";
+    }
+  };
+}
+
+// 保存反馈: 按钮短暂变色, 不弹窗打断操作
+let saveResetTimer = null;
+function flashSaveButtons(ok) {
+  const buttons = document.querySelectorAll("[data-save]");
+  buttons.forEach((b) => {
+    b.classList.remove("ok", "err");
+    b.classList.add(ok ? "ok" : "err");
+    b.textContent = ok ? "已保存" : "保存失败";
+  });
+  clearTimeout(saveResetTimer);
+  saveResetTimer = setTimeout(() => {
+    buttons.forEach((b) => {
+      b.classList.remove("ok", "err");
+      b.textContent = "保存";
+    });
+  }, 1600);
+}
+
+function send(payload) {
+  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(payload));
+}
+
+function clampInt(raw, lo, hi) {
+  return Math.max(lo, Math.min(hi, Math.trunc(Number(raw) || 0)));
+}
+
+function sendQueryParameter(raw) {
+  const value = clampInt(raw, 0, 255);
+  document.getElementById("qp").value = value;
+  send({ type: "control", action: "setPressureQueryParameter", value });
+}
+
+function sendOnBedThresholds() {
+  const cell = clampInt(document.getElementById("bed-cell").value, 0, 255);
+  const count = clampInt(document.getElementById("bed-count").value, 1, 512);
+  document.getElementById("bed-cell").value = cell;
+  document.getElementById("bed-count").value = count;
+  send({ type: "control", action: "setOnBedThresholds", cell, count });
+}
+
+document.getElementById("serial-toggle").addEventListener("click", () => {
+  send({ type: "control", action: "toggleSerial" });
+});
+
+function wireNumber(id, onChange) {
+  const el = document.getElementById(id);
+  el.addEventListener("change", onChange);
+  el.addEventListener("wheel", (e) => {
+    e.preventDefault();
+    el.value = (parseInt(el.value, 10) || 0) + (e.deltaY > 0 ? -1 : 1);
+    onChange();
+    el.blur();
+  }, { passive: false });
+}
+
+wireNumber("qp", () => sendQueryParameter(document.getElementById("qp").value));
+wireNumber("bed-cell", sendOnBedThresholds);
+wireNumber("bed-count", sendOnBedThresholds);
+
+// "保存"按钮把当前全部参数落盘到服务端 settings.json, 换浏览器/重启都还在
+document.querySelectorAll("[data-save]").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    sendQueryParameter(document.getElementById("qp").value);
+    sendOnBedThresholds();
+    send({
+      type: "control", action: "setServerPort",
+      value: clampInt(document.getElementById("server-port").value, 1, 65535),
+    });
+    send({ type: "control", action: "saveSettings" });
+  });
+});
+
+document.getElementById("apply-ports").addEventListener("click", () => {
+  send({
+    type: "control", action: "setPorts",
+    pressure: document.getElementById("sel-pressure").value,
+    vitals: document.getElementById("sel-vitals").value,
+  });
+});
+
+document.getElementById("refresh-ports").addEventListener("click", () => {
+  send({ type: "control", action: "listPorts" });
+});
+
+document.getElementById("shutdown").addEventListener("click", () => {
+  if (!confirm("确定退出程序？串口会被释放，页面将失去连接。")) return;
+  send({ type: "control", action: "shutdown" });
+});
+
+connect();
+</script>
+</body>
+</html>
